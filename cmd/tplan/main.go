@@ -12,7 +12,8 @@ import (
 	"github.com/yourusername/tplan/internal/tui"
 )
 
-const version = "1.0.0"
+// Version is set via ldflags during build
+var Version = "dev"
 
 func main() {
 	// Parse command-line flags
@@ -25,7 +26,7 @@ func main() {
 	flag.Parse()
 
 	if *versionFlag {
-		fmt.Printf("tplan version %s\n", version)
+		fmt.Printf("tplan version %s\n", Version)
 		os.Exit(0)
 	}
 
