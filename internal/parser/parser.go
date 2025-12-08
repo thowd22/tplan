@@ -280,14 +280,17 @@ func (p *Parser) parseText(data []byte) (*models.PlanResult, error) {
 				Type:    resourceType,
 				Name:    resourceName,
 				Mode:    "managed",
+				Change:  models.Change{},
 			}
 
 			// Use pending action if available, otherwise determine from symbol
 			if pendingAction != "" {
 				currentResource.Action = pendingAction
 				currentResource.ActionReason = pendingReason
+				currentResource.Change.Actions = []string{string(pendingAction)}
 			} else {
 				currentResource.Action = p.symbolToAction(symbol)
+				currentResource.Change.Actions = []string{string(currentResource.Action)}
 			}
 
 			// Reset pending values

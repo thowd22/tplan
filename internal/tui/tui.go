@@ -308,22 +308,20 @@ func (m Model) renderTreeNode(node *TreeNode, selected bool) string {
 	address := node.Resource.Address
 
 	if selected {
-		// Add selection indicator with colored resource text
-		selectionIndicator := selectedStyle.Render("❯ ")
-		prefixText := selectedStyle.Render(prefix)
-		expandText := selectedStyle.Render(expandIcon + " ")
-		iconText := actionStyle.Render(actionIcon + " ")
-		addressText := actionStyle.Render(address)
-
-		return selectionIndicator + prefixText + expandText + iconText + addressText
+		// Build full text line first, then apply selection style to entire line
+		fullLine := fmt.Sprintf("❯ %s%s %s %s", prefix, expandIcon, actionIcon, address)
+		// Apply selection background to full line, but keep width constraint
+		return selectedStyle.Width(m.width - 2).Render(fullLine)
 	} else {
-		// Normal rendering with spacing for alignment and colored resource text
-		return fmt.Sprintf("  %s%s %s %s",
-			treeLineStyle.Render(prefix),
-			treeLineStyle.Render(expandIcon),
-			actionStyle.Render(actionIcon),
-			actionStyle.Render(address),
+		// Normal rendering with colored resource text
+		line := fmt.Sprintf("  %s%s %s %s",
+			prefix,
+			expandIcon,
+			actionIcon,
+			address,
 		)
+		// Apply action color to the entire line for consistency
+		return actionStyle.Render(line)
 	}
 }
 
