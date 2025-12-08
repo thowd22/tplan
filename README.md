@@ -4,18 +4,19 @@ A Terminal User Interface (TUI) for viewing and analyzing Terraform plans with g
 
 ## Overview
 
-`tplan` is a command-line tool that provides an interactive interface for reviewing Terraform plans. It parses Terraform plan output (both human-readable and JSON formats) from stdin and presents it in an easy-to-navigate hierarchical TUI, similar to git log. With built-in drift detection and git integration, you can see exactly which commits and authors modified the resources that have drifted.
+`tplan` is a command-line tool that provides an interactive interface for reviewing Terraform plans. It parses Terraform JSON plan output from stdin and presents it in an easy-to-navigate hierarchical TUI, similar to git log. With built-in drift detection and git integration, you can see exactly which commits and authors modified the resources.
 
 ## Features
 
-- **Pipe-friendly**: Direct integration with `terraform plan` via stdin
-- **Dual Format Support**: Works with both human-readable and JSON plan output
+- **JSON Plan Format**: Works with Terraform's complete JSON plan format for accurate, detailed information
 - **Interactive Hierarchical TUI**: Navigate through Terraform plan changes in a git log-style tree view
 - **Expand/Collapse**: Toggle resource details with keyboard controls
-- **Git Integration**: Full drift detection showing commit ID, branch, author, and file information
+- **Complete Attribute Display**: View all resource attributes, including nested structures
+- **Git Integration**: Drift detection showing commit ID, branch, author, and file information
 - **Error & Warning Display**: Dedicated tabs for errors and warnings
 - **Color-Coded Actions**: Visual distinction between creates (green), updates (yellow), deletes (red), and replaces (blue)
 - **Resource Details**: View before/after states and attribute changes
+- **Report Generation**: Export plan analysis to Markdown format
 
 ## Installation
 
@@ -36,14 +37,14 @@ go install ./cmd/tplan
 
 ### Basic Usage
 
-Pipe your Terraform plan directly into tplan:
+tplan requires Terraform's JSON plan format for complete and accurate information:
 
 ```bash
-# Human-readable format
-terraform plan | tplan
+# Create a plan file
+terraform plan -out=tfplan
 
-# JSON format
-terraform plan -json | tplan
+# View it with tplan
+terraform show -json tfplan | tplan
 ```
 
 ### Drift Detection
@@ -51,16 +52,33 @@ terraform plan -json | tplan
 Enable drift detection and git integration with the `-drift` flag:
 
 ```bash
-terraform plan | tplan -drift
+terraform plan -out=tfplan
+terraform show -json tfplan | tplan -drift
 ```
 
 When drift is detected, tplan will show:
-- The Terraform file containing the drifted resource
+- The Terraform file containing the resource
 - Git commit ID (last commit that modified the file)
 - Git branch name
 - Commit author name and email
 - Commit date
 - Uncommitted changes status
+
+### Report Generation
+
+Generate a Markdown report of the plan:
+
+```bash
+terraform plan -out=tfplan
+terraform show -json tfplan | tplan -report
+```
+
+Combine with drift detection:
+
+```bash
+terraform plan -out=tfplan
+terraform show -json tfplan | tplan -report -drift
+```
 
 ### Help
 
@@ -77,7 +95,7 @@ tplan -help
 - `Tab`: Switch between Changes/Errors/Warnings tabs
 - `g`: Jump to top
 - `G`: Jump to bottom
-- `q` or `Esc`: Quit
+- `q`: Quit
 
 ## Examples
 
@@ -85,16 +103,18 @@ tplan -help
 
 ```bash
 cd your-terraform-project
-terraform plan | tplan
+terraform plan -out=tfplan
+terraform show -json tfplan | tplan
 ```
 
-Navigate through the changes, expand resources to see details, and review errors/warnings in separate tabs.
+Navigate through the changes, expand resources to see all attributes and details, and review errors/warnings in separate tabs.
 
 ### Example 2: Drift Detection
 
 ```bash
 cd your-terraform-project
-terraform plan | tplan -drift
+terraform plan -out=tfplan
+terraform show -json tfplan | tplan -drift
 ```
 
 When you expand a resource, you'll see git information like:
@@ -108,31 +128,46 @@ When you expand a resource, you'll see git information like:
     Date: 2024-12-08 10:30:45
 ```
 
-### Example 3: Using JSON Format
+### Example 3: Generate Report
 
 ```bash
-terraform plan -json | tplan -drift
+terraform plan -out=tfplan
+terraform show -json tfplan | tplan -report -drift
 ```
 
-JSON format provides more detailed information and is recommended for complex plans.
+Creates a `report.md` file with complete plan analysis including git information.
+
+## Why JSON Format Only?
+
+tplan requires the full JSON plan format because:
+
+- **Complete Data**: JSON format includes all resource attributes and nested structures
+- **Accurate Parsing**: Structured data ensures reliable parsing
+- **No Ambiguity**: Unlike text format, JSON is designed for programmatic consumption
+- **Better Experience**: You get to see all the details, not just a subset
+
+The text format from `terraform plan` is designed for human reading and doesn't include complete structured data. The streaming JSON format from `terraform plan -json` doesn't include detailed before/after attribute values.
 
 ## Project Structure
 
 ```
 tplan/
 ├── cmd/tplan/              # Main application entry point
-│   └── main.go            # CLI with stdin pipe and -drift flag support
+│   └── main.go            # CLI with stdin pipe and flags
 ├── internal/
-│   ├── parser/            # Terraform plan parsing (JSON + text)
-│   │   └── parser.go      # Dual-format parser with auto-detection
+│   ├── parser/            # Terraform JSON plan parsing
+│   │   └── parser.go      # JSON parser using terraform-json library
 │   ├── tui/               # Terminal UI components
 │   │   └── tui.go         # Bubble Tea hierarchical tree view
 │   ├── git/               # Git integration utilities
 │   │   └── git.go         # Commit, branch, author detection
+│   ├── report/            # Report generation
+│   │   └── report.go      # Markdown report generator
 │   └── models/            # Data structures and models
 │       ├── plan.go        # Plan and resource models
 │       └── drift.go       # Drift information models
 ├── examples/              # Example usage and demos
+├── .github/workflows/     # GitHub Actions for releases
 ├── go.mod                 # Go module definition
 └── README.md              # This file
 ```
@@ -145,11 +180,12 @@ tplan/
 
 ## How It Works
 
-1. **Input**: tplan reads Terraform plan output from stdin
-2. **Parsing**: Automatically detects format (JSON or text) and parses it
-3. **Drift Detection**: If `-drift` flag is used, searches for corresponding .tf files and queries git
-4. **Display**: Renders an interactive TUI with hierarchical tree view
-5. **Navigation**: Use keyboard to explore changes, errors, and warnings
+1. **Input**: tplan reads Terraform JSON plan from stdin
+2. **Validation**: Ensures input is valid JSON plan format with format_version
+3. **Parsing**: Uses terraform-json library for reliable parsing
+4. **Drift Detection**: If `-drift` flag is used, searches for corresponding .tf files and queries git
+5. **Display**: Renders an interactive TUI with hierarchical tree view showing all resource details
+6. **Navigation**: Use keyboard to explore changes, errors, and warnings
 
 ## Development
 
@@ -157,6 +193,7 @@ tplan/
 
 - Go 1.21 or later
 - Git (for drift detection features)
+- Terraform (for generating test plans)
 
 ### Building
 
@@ -164,29 +201,26 @@ tplan/
 go build -o tplan ./cmd/tplan
 ```
 
-### Testing the Parser
+### Testing
 
 ```bash
-# Test with example data
-go run examples/test_parser.go test_plan.json
-
-# Test with live Terraform plan
-terraform plan -json | go run examples/test_parser.go -
+# Create a test plan
+cd examples
+terraform init
+terraform plan -out=tfplan
+terraform show -json tfplan | ../tplan
 ```
 
-### Testing the TUI
+## Versioning
+
+The version is automatically set during GitHub Actions releases via git tags:
 
 ```bash
-# Run TUI example with sample data
-go run example_tui_usage.go
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-### Testing Git Integration
-
-```bash
-# Test git drift detection
-go run test_git.go
-```
+The GitHub Actions workflow will build binaries for multiple platforms with the version embedded.
 
 ## License
 

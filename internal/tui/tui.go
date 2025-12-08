@@ -322,6 +322,13 @@ func (m Model) renderResourceDetails(node *TreeNode) string {
 	b.WriteString(attributeStyle.Render(fmt.Sprintf("%sProvider: %s\n", indent, res.ProviderName)))
 	b.WriteString(attributeStyle.Render(fmt.Sprintf("%sMode: %s\n", indent, res.Mode)))
 
+	// Show hint if no attributes are available
+	hasAttributes := len(res.Change.Before) > 0 || len(res.Change.After) > 0
+	if !hasAttributes {
+		hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Italic(true)
+		b.WriteString(hintStyle.Render(fmt.Sprintf("%s(Use 'terraform show -json planfile | tplan' for detailed attributes)\n", indent)))
+	}
+
 	// Show drift information if available
 	if res.DriftInfo != nil && res.DriftInfo.IsValid() {
 		driftStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true) // Cyan
@@ -366,16 +373,8 @@ func (m Model) renderAttributes(baseIndent string, attrs map[string]interface{},
 	}
 	sort.Strings(keys)
 
-	count := 0
-	maxDisplay := 5
-
+	// Show all attributes (no limit)
 	for _, k := range keys {
-		if count >= maxDisplay {
-			remaining := len(attrs) - maxDisplay
-			b.WriteString(attributeStyle.Render(fmt.Sprintf("%s... (%d more attributes)\n", baseIndent, remaining)))
-			break
-		}
-
 		v := attrs[k]
 		valueStr := fmt.Sprintf("%v", v)
 
@@ -386,14 +385,13 @@ func (m Model) renderAttributes(baseIndent string, attrs map[string]interface{},
 		}
 
 		// Truncate long values
-		if len(valueStr) > 50 {
-			valueStr = valueStr[:47] + "..."
+		if len(valueStr) > 100 {
+			valueStr = valueStr[:97] + "..."
 		}
 
 		keyPart := attributeStyle.Render(fmt.Sprintf("%s%s = ", baseIndent, k))
 		valuePart := valueAddStyle.Render(valueStr)
 		b.WriteString(keyPart + valuePart + "\n")
-		count++
 	}
 
 	return b.String()
@@ -420,58 +418,52 @@ func (m Model) renderAttributeDiff(baseIndent string, before, after map[string]i
 	}
 	sort.Strings(keys)
 
-	count := 0
-	maxDisplay := 5
-
-	// Process attributes in sorted order
+	// Process all attributes (no limit)
+	changesFound := false
 	for _, k := range keys {
-		if count >= maxDisplay {
-			break
-		}
-
 		afterVal, existsAfter := after[k]
 		beforeVal, existsBefore := before[k]
 
 		if !existsBefore && existsAfter {
 			// New attribute
 			valueStr := fmt.Sprintf("%v", afterVal)
-			if len(valueStr) > 40 {
-				valueStr = valueStr[:37] + "..."
+			if len(valueStr) > 80 {
+				valueStr = valueStr[:77] + "..."
 			}
 			b.WriteString(attributeStyle.Render(fmt.Sprintf("%s    + %s = ", baseIndent, k)))
 			b.WriteString(valueAddStyle.Render(valueStr))
 			b.WriteString("\n")
-			count++
+			changesFound = true
 		} else if existsBefore && !existsAfter {
 			// Removed attribute
 			valueStr := fmt.Sprintf("%v", beforeVal)
-			if len(valueStr) > 40 {
-				valueStr = valueStr[:37] + "..."
+			if len(valueStr) > 80 {
+				valueStr = valueStr[:77] + "..."
 			}
 			b.WriteString(attributeStyle.Render(fmt.Sprintf("%s    - %s = ", baseIndent, k)))
 			b.WriteString(valueRemStyle.Render(valueStr))
 			b.WriteString("\n")
-			count++
+			changesFound = true
 		} else if fmt.Sprintf("%v", beforeVal) != fmt.Sprintf("%v", afterVal) {
 			// Changed attribute
 			beforeStr := fmt.Sprintf("%v", beforeVal)
 			afterStr := fmt.Sprintf("%v", afterVal)
-			if len(beforeStr) > 30 {
-				beforeStr = beforeStr[:27] + "..."
+			if len(beforeStr) > 60 {
+				beforeStr = beforeStr[:57] + "..."
 			}
-			if len(afterStr) > 30 {
-				afterStr = afterStr[:27] + "..."
+			if len(afterStr) > 60 {
+				afterStr = afterStr[:57] + "..."
 			}
 			b.WriteString(attributeStyle.Render(fmt.Sprintf("%s    ~ %s: ", baseIndent, k)))
 			b.WriteString(valueRemStyle.Render(beforeStr))
 			b.WriteString(attributeStyle.Render(" → "))
 			b.WriteString(valueAddStyle.Render(afterStr))
 			b.WriteString("\n")
-			count++
+			changesFound = true
 		}
 	}
 
-	if count == 0 {
+	if !changesFound {
 		b.WriteString(attributeStyle.Render(fmt.Sprintf("%s    (no attribute changes shown)\n", baseIndent)))
 	}
 
