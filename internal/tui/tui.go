@@ -48,7 +48,7 @@ var (
 	noopStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))             // Gray
 
 	// UI element styles
-	selectedStyle  = lipgloss.NewStyle().Background(lipgloss.Color("240")).Bold(true)
+	selectedStyle  = lipgloss.NewStyle().Background(lipgloss.Color("62")).Foreground(lipgloss.Color("15")).Bold(true) // Bright highlight
 	summaryStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62")).Padding(0, 1).MarginBottom(1)
 	tabActiveStyle = lipgloss.NewStyle().Background(lipgloss.Color("62")).Foreground(lipgloss.Color("15")).Padding(0, 2).Bold(true)
 	tabStyle       = lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("250")).Padding(0, 2)
@@ -304,17 +304,27 @@ func (m Model) renderTreeNode(node *TreeNode, selected bool) string {
 	action := getAction(node.Resource.Change.Actions)
 	actionIcon, style := getActionIconAndStyle(action)
 
-	// Build the line
+	// Build the line with selection indicator
 	address := node.Resource.Address
-	nodeText := fmt.Sprintf("%s%s %s %s",
-		treeLineStyle.Render(prefix),
-		treeLineStyle.Render(expandIcon),
-		style.Render(actionIcon),
-		style.Render(address),
-	)
+	var nodeText string
 
 	if selected {
+		// Add selection indicator and apply highlight style
+		nodeText = fmt.Sprintf("❯ %s%s %s %s",
+			prefix,
+			expandIcon,
+			actionIcon,
+			address,
+		)
 		nodeText = selectedStyle.Render(nodeText)
+	} else {
+		// Normal rendering with spacing for alignment
+		nodeText = fmt.Sprintf("  %s%s %s %s",
+			treeLineStyle.Render(prefix),
+			treeLineStyle.Render(expandIcon),
+			style.Render(actionIcon),
+			style.Render(address),
+		)
 	}
 
 	return nodeText
@@ -464,15 +474,21 @@ func (m Model) renderErrorsView() string {
 
 	var b strings.Builder
 	for i, err := range m.plan.Errors {
-		prefix := "  "
-		if i == m.cursor {
-			prefix = selectedStyle.Render("> ")
-		}
 		resource := ""
 		if err.Resource != "" {
 			resource = fmt.Sprintf("[%s] ", err.Resource)
 		}
-		b.WriteString(fmt.Sprintf("%s%s %s%s\n", prefix, deleteStyle.Render("✖"), resource, err.Message))
+
+		line := fmt.Sprintf("✖ %s%s", resource, err.Message)
+
+		if i == m.cursor {
+			// Full line highlight with selection indicator
+			b.WriteString(selectedStyle.Render("❯ " + line))
+		} else {
+			// Normal rendering with spacing for alignment
+			b.WriteString(fmt.Sprintf("  %s", deleteStyle.Render(line)))
+		}
+		b.WriteString("\n")
 	}
 	return b.String()
 }
@@ -485,15 +501,21 @@ func (m Model) renderWarningsView() string {
 
 	var b strings.Builder
 	for i, warn := range m.plan.Warnings {
-		prefix := "  "
-		if i == m.cursor {
-			prefix = selectedStyle.Render("> ")
-		}
 		resource := ""
 		if warn.Resource != "" {
 			resource = fmt.Sprintf("[%s] ", warn.Resource)
 		}
-		b.WriteString(fmt.Sprintf("%s%s %s%s\n", prefix, updateStyle.Render("⚠"), resource, warn.Message))
+
+		line := fmt.Sprintf("⚠ %s%s", resource, warn.Message)
+
+		if i == m.cursor {
+			// Full line highlight with selection indicator
+			b.WriteString(selectedStyle.Render("❯ " + line))
+		} else {
+			// Normal rendering with spacing for alignment
+			b.WriteString(fmt.Sprintf("  %s", updateStyle.Render(line)))
+		}
+		b.WriteString("\n")
 	}
 	return b.String()
 }

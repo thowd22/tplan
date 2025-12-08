@@ -8,12 +8,14 @@ import (
 	"github.com/yourusername/tplan/internal/git"
 	"github.com/yourusername/tplan/internal/models"
 	"github.com/yourusername/tplan/internal/parser"
+	"github.com/yourusername/tplan/internal/report"
 	"github.com/yourusername/tplan/internal/tui"
 )
 
 func main() {
 	// Parse command-line flags
 	driftMode := flag.Bool("drift", false, "Enable drift detection and git integration")
+	reportMode := flag.Bool("report", false, "Generate a Markdown report (report.md)")
 	help := flag.Bool("help", false, "Show help message")
 	flag.BoolVar(help, "h", false, "Show help message")
 	flag.Parse()
@@ -41,11 +43,26 @@ func main() {
 		}
 	}
 
+	// If report mode is enabled, generate the report and exit
+	if *reportMode {
+		if err := generateReport(planResult, *driftMode); err != nil {
+			fmt.Fprintf(os.Stderr, "Error generating report: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("✓ Report generated: report.md")
+		os.Exit(0)
+	}
+
 	// Run the TUI
 	if err := tui.Run(planResult); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func generateReport(planResult *models.PlanResult, includeDrift bool) error {
+	gen := report.NewGenerator(planResult, includeDrift)
+	return gen.WriteToFile("report.md")
 }
 
 func enrichWithGitInfo(planResult *models.PlanResult) error {
@@ -89,6 +106,8 @@ func printHelp() {
 	fmt.Println("OPTIONS:")
 	fmt.Println("  -drift        Enable drift detection with git integration")
 	fmt.Println("                Shows git commit, branch, and author info for drifted resources")
+	fmt.Println("  -report       Generate a Markdown report (report.md) and exit")
+	fmt.Println("                Use with -drift to include git information in the report")
 	fmt.Println("  -h, -help     Show this help message")
 	fmt.Println()
 	fmt.Println("EXAMPLES:")
@@ -97,6 +116,12 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("  # With drift detection")
 	fmt.Println("  terraform plan | tplan -drift")
+	fmt.Println()
+	fmt.Println("  # Generate report")
+	fmt.Println("  terraform plan | tplan -report")
+	fmt.Println()
+	fmt.Println("  # Generate report with drift information")
+	fmt.Println("  terraform plan | tplan -report -drift")
 	fmt.Println()
 	fmt.Println("  # Using JSON format")
 	fmt.Println("  terraform plan -json | tplan -drift")

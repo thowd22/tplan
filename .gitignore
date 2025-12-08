@@ -18,6 +18,9 @@ go.work
 /tplan
 tplan-*
 
+# Generated reports
+report.md
+
 # Terraform files
 *.tfstate
 *.tfstate.*
