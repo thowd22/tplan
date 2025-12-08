@@ -313,6 +313,9 @@ func (p *Parser) parseText(data []byte) (*models.PlanResult, error) {
 	// Try to extract Terraform version from text
 	result.TerraformVersion = p.extractVersionFromText(string(data))
 
+	// Calculate summary statistics
+	p.calculateSummary(result)
+
 	return result, nil
 }
 
