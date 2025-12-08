@@ -12,13 +12,22 @@ import (
 	"github.com/yourusername/tplan/internal/tui"
 )
 
+const version = "1.0.0"
+
 func main() {
 	// Parse command-line flags
 	driftMode := flag.Bool("drift", false, "Enable drift detection and git integration")
 	reportMode := flag.Bool("report", false, "Generate a Markdown report (report.md)")
+	versionFlag := flag.Bool("version", false, "Show version information")
+	flag.BoolVar(versionFlag, "v", false, "Show version information")
 	help := flag.Bool("help", false, "Show help message")
 	flag.BoolVar(help, "h", false, "Show help message")
 	flag.Parse()
+
+	if *versionFlag {
+		fmt.Printf("tplan version %s\n", version)
+		os.Exit(0)
+	}
 
 	if *help {
 		printHelp()
@@ -108,6 +117,7 @@ func printHelp() {
 	fmt.Println("                Shows git commit, branch, and author info for drifted resources")
 	fmt.Println("  -report       Generate a Markdown report (report.md) and exit")
 	fmt.Println("                Use with -drift to include git information in the report")
+	fmt.Println("  -v, -version  Show version information")
 	fmt.Println("  -h, -help     Show this help message")
 	fmt.Println()
 	fmt.Println("EXAMPLES:")
