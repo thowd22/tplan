@@ -170,6 +170,9 @@ func (p *Parser) parseJSON(data []byte) (*models.PlanResult, error) {
 
 // parseText parses human-readable text format plan output
 func (p *Parser) parseText(data []byte) (*models.PlanResult, error) {
+	// Strip ANSI color codes that Terraform adds when outputting to terminal
+	text := stripAnsiCodes(string(data))
+
 	result := &models.PlanResult{
 		Resources:        make([]models.ResourceChange, 0),
 		OutputChanges:    make([]models.OutputChange, 0),
@@ -178,7 +181,7 @@ func (p *Parser) parseText(data []byte) (*models.PlanResult, error) {
 		DriftedResources: make([]models.DriftedResource, 0),
 	}
 
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	scanner := bufio.NewScanner(strings.NewReader(text))
 
 	var currentResource *models.ResourceChange
 	var inResourceBlock bool
@@ -194,8 +197,16 @@ func (p *Parser) parseText(data []byte) (*models.PlanResult, error) {
 	warningRe := regexp.MustCompile(`^\s*Warning:\s*(.+)$`)
 	driftRe := regexp.MustCompile(`^\s*Note:.*drift.*detected|Objects have changed outside`)
 
+	// Skip lines that are just progress/status messages
+	skipLineRe := regexp.MustCompile(`^\s*(Refreshing|Acquiring|Releasing|Initializing|Preparing|Reading|Terraform will perform|Terraform used the selected providers)`)
+
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		// Skip progress/status lines
+		if skipLineRe.MatchString(line) {
+			continue
+		}
 
 		// Check for errors
 		if matches := errorRe.FindStringSubmatch(line); matches != nil {
@@ -435,6 +446,13 @@ func (p *Parser) symbolToAction(symbol string) models.ChangeAction {
 	default:
 		return models.ActionNoOp
 	}
+}
+
+// stripAnsiCodes removes ANSI color codes from text
+func stripAnsiCodes(text string) string {
+	// ANSI escape sequence regex: \x1b\[[0-9;]*m
+	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	return ansiRegex.ReplaceAllString(text, "")
 }
 
 // extractVersionFromText attempts to extract Terraform version from text output
