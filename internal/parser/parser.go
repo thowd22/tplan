@@ -183,10 +183,13 @@ func (p *Parser) parseText(data []byte) (*models.PlanResult, error) {
 	var currentResource *models.ResourceChange
 	var inResourceBlock bool
 	var resourceLines []string
+	var pendingAddress string
+	var pendingAction models.ChangeAction
+	var pendingReason string
 
 	// Regular expressions for parsing
-	resourceHeaderRe := regexp.MustCompile(`^\s*([#~+-])\s+(\S+)\s+(.+?)\s*{?\s*$`)
-	resourceActionRe := regexp.MustCompile(`^\s*#\s+(.+?)\s+(will be|must be)\s+(created|destroyed|updated|replaced|read)`)
+	resourceCommentRe := regexp.MustCompile(`^\s*#\s+([^\s]+(?:\[[^\]]+\])?)\s+(will be|must be)\s+(created|destroyed|updated|replaced|read)`)
+	resourceLineRe := regexp.MustCompile(`^\s*([-+~])\s+resource\s+"([^"]+)"\s+"([^"]+)"`)
 	errorRe := regexp.MustCompile(`^\s*Error:\s*(.+)$`)
 	warningRe := regexp.MustCompile(`^\s*Warning:\s*(.+)$`)
 	driftRe := regexp.MustCompile(`^\s*Note:.*drift.*detected|Objects have changed outside`)
@@ -216,8 +219,34 @@ func (p *Parser) parseText(data []byte) (*models.PlanResult, error) {
 			result.DriftDetected = true
 		}
 
-		// Check for resource header
-		if matches := resourceHeaderRe.FindStringSubmatch(line); matches != nil {
+		// Check for resource comment line (e.g., "# aws_instance.web will be created")
+		if matches := resourceCommentRe.FindStringSubmatch(line); matches != nil {
+			pendingAddress = matches[1]
+			actionWord := matches[3]
+
+			// Map action words to actions
+			switch actionWord {
+			case "created":
+				pendingAction = models.ActionCreate
+			case "destroyed":
+				pendingAction = models.ActionDelete
+			case "updated":
+				pendingAction = models.ActionUpdate
+			case "replaced":
+				pendingAction = models.ActionReplace
+			case "read":
+				pendingAction = models.ActionRead
+			}
+
+			// Check for reason (e.g., "must be replaced")
+			if matches[2] == "must be" {
+				pendingReason = "must be " + actionWord
+			}
+			continue
+		}
+
+		// Check for resource line (e.g., "- resource "aws_instance" "web"")
+		if matches := resourceLineRe.FindStringSubmatch(line); matches != nil {
 			// Save previous resource if exists
 			if currentResource != nil {
 				p.parseResourceDetails(currentResource, resourceLines)
@@ -226,18 +255,34 @@ func (p *Parser) parseText(data []byte) (*models.PlanResult, error) {
 
 			// Start new resource
 			symbol := matches[1]
-			// action := matches[2] // Not used currently
-			address := matches[3]
+			resourceType := matches[2]
+			resourceName := matches[3]
+
+			// Use pending address if available, otherwise construct from resource line
+			address := pendingAddress
+			if address == "" {
+				address = resourceType + "." + resourceName
+			}
 
 			currentResource = &models.ResourceChange{
 				Address: address,
+				Type:    resourceType,
+				Name:    resourceName,
+				Mode:    "managed",
 			}
 
-			// Parse address to extract type and name
-			p.parseResourceAddress(currentResource, address)
+			// Use pending action if available, otherwise determine from symbol
+			if pendingAction != "" {
+				currentResource.Action = pendingAction
+				currentResource.ActionReason = pendingReason
+			} else {
+				currentResource.Action = p.symbolToAction(symbol)
+			}
 
-			// Determine action from symbol
-			currentResource.Action = p.symbolToAction(symbol)
+			// Reset pending values
+			pendingAddress = ""
+			pendingAction = ""
+			pendingReason = ""
 
 			inResourceBlock = true
 			resourceLines = []string{line}
@@ -251,15 +296,6 @@ func (p *Parser) parseText(data []byte) (*models.PlanResult, error) {
 			// Check if block ended
 			if strings.TrimSpace(line) == "}" {
 				inResourceBlock = false
-			}
-		}
-
-		// Parse resource action descriptions
-		if matches := resourceActionRe.FindStringSubmatch(line); matches != nil {
-			if currentResource != nil {
-				actionStr := matches[3]
-				currentResource.Action = models.ChangeAction(actionStr)
-				currentResource.ActionReason = strings.TrimSpace(matches[1])
 			}
 		}
 	}
