@@ -1,0 +1,208 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v1.0.0, v0.1.0, etc.
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: write  # Required for creating releases
+
+jobs:
+  build:
+    name: Build Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Linux builds
+          - goos: linux
+            goarch: amd64
+            output: tplan-linux-amd64
+          - goos: linux
+            goarch: arm64
+            output: tplan-linux-arm64
+          
+          # macOS builds
+          - goos: darwin
+            goarch: amd64
+            output: tplan-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            output: tplan-darwin-arm64
+          
+          # Windows builds
+          - goos: windows
+            goarch: amd64
+            output: tplan-windows-amd64.exe
+          - goos: windows
+            goarch: arm64
+            output: tplan-windows-arm64.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -v -ldflags="-s -w -X main.Version=${{ github.ref_name }}" -o ${{ matrix.output }} ./cmd/tplan
+          
+      - name: Compress binary (Unix)
+        if: matrix.goos != 'windows'
+        run: |
+          tar -czf ${{ matrix.output }}.tar.gz ${{ matrix.output }}
+          sha256sum ${{ matrix.output }}.tar.gz > ${{ matrix.output }}.tar.gz.sha256
+
+      - name: Compress binary (Windows)
+        if: matrix.goos == 'windows'
+        run: |
+          zip ${{ matrix.output }}.zip ${{ matrix.output }}
+          sha256sum ${{ matrix.output }}.zip > ${{ matrix.output }}.zip.sha256
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output }}
+          path: |
+            ${{ matrix.output }}.*
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" \) -exec cp {} release-assets/ \;
+          ls -lh release-assets/
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          cat << 'EOF' > release_notes.md
+          ## tplan ${{ github.ref_name }}
+          
+          A Terminal User Interface (TUI) for analyzing Terraform plans with drift detection and git integration.
+          
+          ### Features
+          - 🚀 Pipe Terraform plans directly: `terraform plan | tplan`
+          - 🌳 Hierarchical tree view similar to git log
+          - 🔍 Drift detection with git attribution (`-drift` flag)
+          - 🎨 Color-coded resource actions (create, update, delete, replace)
+          - ⚠️  Dedicated tabs for errors and warnings
+          - ⌨️  Intuitive keyboard navigation
+          
+          ### Installation
+          
+          Download the appropriate binary for your platform below, extract it, and add it to your PATH.
+          
+          #### Linux (amd64)
+          ```bash
+          wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/tplan-linux-amd64.tar.gz
+          tar -xzf tplan-linux-amd64.tar.gz
+          sudo mv tplan-linux-amd64 /usr/local/bin/tplan
+          chmod +x /usr/local/bin/tplan
+          ```
+          
+          #### macOS (Apple Silicon)
+          ```bash
+          wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/tplan-darwin-arm64.tar.gz
+          tar -xzf tplan-darwin-arm64.tar.gz
+          sudo mv tplan-darwin-arm64 /usr/local/bin/tplan
+          chmod +x /usr/local/bin/tplan
+          ```
+          
+          #### macOS (Intel)
+          ```bash
+          wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/tplan-darwin-amd64.tar.gz
+          tar -xzf tplan-darwin-amd64.tar.gz
+          sudo mv tplan-darwin-amd64 /usr/local/bin/tplan
+          chmod +x /usr/local/bin/tplan
+          ```
+          
+          #### Windows
+          Download the `.zip` file, extract it, and add the directory to your PATH.
+          
+          ### Usage
+          
+          ```bash
+          # Basic usage
+          terraform plan | tplan
+          
+          # With drift detection
+          terraform plan | tplan -drift
+          
+          # Using JSON format
+          terraform plan -json | tplan -drift
+          
+          # Help
+          tplan -help
+          ```
+          
+          ### Checksums
+          
+          SHA256 checksums are provided for all binaries. Verify your download:
+          
+          ```bash
+          sha256sum -c tplan-linux-amd64.tar.gz.sha256
+          ```
+          
+          ### What's New
+          
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md) for details.
+          EOF
+          
+          cat release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ github.ref_name }}
+          body_path: release_notes.md
+          files: release-assets/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release summary
+        run: |
+          echo "## Release Created! 🎉" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Version: **${{ github.ref_name }}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Built Artifacts:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          ls -lh release-assets/ | tail -n +2 | awk '{print "- " $9 " (" $5 ")"}' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View the release: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
