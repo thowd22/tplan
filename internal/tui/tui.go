@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbletea"
@@ -257,35 +258,20 @@ func (m Model) renderChangesView() string {
 		return helpStyle.Render("No changes to display")
 	}
 
-	// Calculate viewport bounds
-	start := m.viewportTop
-	end := m.viewportTop + m.viewportSize
-	if end > len(visibleNodes) {
-		end = len(visibleNodes)
-	}
-
-	for i := start; i < end; i++ {
+	// Render all nodes (let terminal handle scrolling)
+	for i := 0; i < len(visibleNodes); i++ {
 		node := visibleNodes[i]
-		line := m.renderTreeNode(node, i == m.cursor)
+		// Check if this node is the currently selected one
+		isSelected := (i == m.cursor)
+		line := m.renderTreeNode(node, isSelected)
 		b.WriteString(line)
 		b.WriteString("\n")
 
-		// Render expanded details
+		// Render expanded details immediately after the node line
 		if node.Expanded {
 			details := m.renderResourceDetails(node)
 			b.WriteString(details)
 		}
-	}
-
-	// Scroll indicator
-	if len(visibleNodes) > m.viewportSize {
-		scrollInfo := fmt.Sprintf("\n%s [%d-%d of %d]",
-			helpStyle.Render("▲▼ Scroll:"),
-			start+1,
-			end,
-			len(visibleNodes),
-		)
-		b.WriteString(scrollInfo)
 	}
 
 	return b.String()
@@ -308,27 +294,26 @@ func (m Model) renderTreeNode(node *TreeNode, selected bool) string {
 	address := node.Resource.Address
 
 	if selected {
-		// Build full text line first, then apply selection style to entire line
+		// Build full text line first, then apply selection style
 		fullLine := fmt.Sprintf("❯ %s%s %s %s", prefix, expandIcon, actionIcon, address)
-		// Apply selection background to full line, but keep width constraint
-		return selectedStyle.Width(m.width - 2).Render(fullLine)
+		// Apply selection background without width constraint
+		return selectedStyle.Render(fullLine)
 	} else {
-		// Normal rendering with colored resource text
-		line := fmt.Sprintf("  %s%s %s %s",
-			prefix,
-			expandIcon,
-			actionIcon,
-			address,
-		)
-		// Apply action color to the entire line for consistency
-		return actionStyle.Render(line)
+		// Normal rendering - color only the icon and resource name, not the entire line
+		selector := treeLineStyle.Render("  ")
+		prefixText := treeLineStyle.Render(prefix)
+		expandText := treeLineStyle.Render(expandIcon + " ")
+		iconAndName := actionStyle.Render(actionIcon + " " + address)
+
+		return selector + prefixText + expandText + iconAndName
 	}
 }
 
 // renderResourceDetails renders expanded resource details
 func (m Model) renderResourceDetails(node *TreeNode) string {
 	var b strings.Builder
-	indent := strings.Repeat("  ", node.Level+2)
+	// Indent details to align with resource name (2 spaces for selection indicator + 2 for content)
+	indent := "    "
 
 	res := node.Resource
 
@@ -364,28 +349,50 @@ func (m Model) renderResourceDetails(node *TreeNode) string {
 		b.WriteString(m.renderAttributeDiff(indent, res.Change.Before, res.Change.After))
 	}
 
+	// Add a blank line after expanded details to separate from next resource
+	b.WriteString("\n")
+
 	return b.String()
 }
 
 // renderAttributes renders attribute map with indentation
 func (m Model) renderAttributes(baseIndent string, attrs map[string]interface{}, subIndent string) string {
 	var b strings.Builder
+
+	// Sort keys to ensure consistent ordering
+	keys := make([]string, 0, len(attrs))
+	for k := range attrs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	count := 0
 	maxDisplay := 5
 
-	for k, v := range attrs {
+	for _, k := range keys {
 		if count >= maxDisplay {
 			remaining := len(attrs) - maxDisplay
-			b.WriteString(attributeStyle.Render(fmt.Sprintf("%s%s... (%d more attributes)\n", baseIndent, subIndent, remaining)))
+			b.WriteString(attributeStyle.Render(fmt.Sprintf("%s... (%d more attributes)\n", baseIndent, remaining)))
 			break
 		}
+
+		v := attrs[k]
 		valueStr := fmt.Sprintf("%v", v)
+
+		// Clean up Terraform format artifacts (e.g., "value" -> null)
+		if strings.Contains(valueStr, " -> ") {
+			parts := strings.Split(valueStr, " -> ")
+			valueStr = parts[0]
+		}
+
+		// Truncate long values
 		if len(valueStr) > 50 {
 			valueStr = valueStr[:47] + "..."
 		}
-		b.WriteString(attributeStyle.Render(fmt.Sprintf("%s%s%s = ", baseIndent, subIndent, k)))
-		b.WriteString(valueAddStyle.Render(valueStr))
-		b.WriteString("\n")
+
+		keyPart := attributeStyle.Render(fmt.Sprintf("%s%s = ", baseIndent, k))
+		valuePart := valueAddStyle.Render(valueStr)
+		b.WriteString(keyPart + valuePart + "\n")
 		count++
 	}
 
@@ -398,17 +405,34 @@ func (m Model) renderAttributeDiff(baseIndent string, before, after map[string]i
 
 	b.WriteString(attributeStyle.Render(fmt.Sprintf("%s  Changes:\n", baseIndent)))
 
+	// Collect all keys from both maps and sort them
+	keySet := make(map[string]bool)
+	for k := range before {
+		keySet[k] = true
+	}
+	for k := range after {
+		keySet[k] = true
+	}
+
+	keys := make([]string, 0, len(keySet))
+	for k := range keySet {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	count := 0
 	maxDisplay := 5
 
-	// Check for changed/added attributes
-	for k, afterVal := range after {
+	// Process attributes in sorted order
+	for _, k := range keys {
 		if count >= maxDisplay {
 			break
 		}
-		beforeVal, existedBefore := before[k]
 
-		if !existedBefore {
+		afterVal, existsAfter := after[k]
+		beforeVal, existsBefore := before[k]
+
+		if !existsBefore && existsAfter {
 			// New attribute
 			valueStr := fmt.Sprintf("%v", afterVal)
 			if len(valueStr) > 40 {
@@ -416,6 +440,16 @@ func (m Model) renderAttributeDiff(baseIndent string, before, after map[string]i
 			}
 			b.WriteString(attributeStyle.Render(fmt.Sprintf("%s    + %s = ", baseIndent, k)))
 			b.WriteString(valueAddStyle.Render(valueStr))
+			b.WriteString("\n")
+			count++
+		} else if existsBefore && !existsAfter {
+			// Removed attribute
+			valueStr := fmt.Sprintf("%v", beforeVal)
+			if len(valueStr) > 40 {
+				valueStr = valueStr[:37] + "..."
+			}
+			b.WriteString(attributeStyle.Render(fmt.Sprintf("%s    - %s = ", baseIndent, k)))
+			b.WriteString(valueRemStyle.Render(valueStr))
 			b.WriteString("\n")
 			count++
 		} else if fmt.Sprintf("%v", beforeVal) != fmt.Sprintf("%v", afterVal) {
@@ -432,23 +466,6 @@ func (m Model) renderAttributeDiff(baseIndent string, before, after map[string]i
 			b.WriteString(valueRemStyle.Render(beforeStr))
 			b.WriteString(attributeStyle.Render(" → "))
 			b.WriteString(valueAddStyle.Render(afterStr))
-			b.WriteString("\n")
-			count++
-		}
-	}
-
-	// Check for removed attributes
-	for k := range before {
-		if count >= maxDisplay {
-			break
-		}
-		if _, exists := after[k]; !exists {
-			valueStr := fmt.Sprintf("%v", before[k])
-			if len(valueStr) > 40 {
-				valueStr = valueStr[:37] + "..."
-			}
-			b.WriteString(attributeStyle.Render(fmt.Sprintf("%s    - %s = ", baseIndent, k)))
-			b.WriteString(valueRemStyle.Render(valueStr))
 			b.WriteString("\n")
 			count++
 		}

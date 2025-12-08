@@ -412,9 +412,15 @@ func (p *Parser) parseResourceDetails(resource *models.ResourceChange, lines []s
 			key := matches[2]
 			value := strings.TrimSpace(matches[3])
 
+			// Clean up Terraform format artifacts
+			if strings.Contains(value, " -> ") {
+				parts := strings.Split(value, " -> ")
+				value = strings.TrimSpace(parts[0])
+			}
+
 			// Parse value (simplified)
 			var parsedValue interface{}
-			if value == "(known after apply)" {
+			if value == "(known after apply)" || value == "null" {
 				parsedValue = nil // Unknown value
 			} else {
 				parsedValue = value
