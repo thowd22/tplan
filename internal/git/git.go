@@ -120,7 +120,10 @@ func (r *Repository) GetDriftInfo(resourceAddress string) (*models.DriftInfo, er
 // findTerraformFile searches for the Terraform file containing the given resource address
 func (r *Repository) findTerraformFile(resourceAddress string) (string, error) {
 	// Parse resource address (e.g., "aws_instance.web" or "module.vpc.aws_subnet.private")
-	parts := strings.Split(resourceAddress, ".")
+	// Strip any indices like [0] or ["key"] from the address
+	addressWithoutIndex := stripResourceIndex(resourceAddress)
+
+	parts := strings.Split(addressWithoutIndex, ".")
 	if len(parts) < 2 {
 		return "", fmt.Errorf("invalid resource address format: %s", resourceAddress)
 	}
@@ -165,6 +168,17 @@ func (r *Repository) findTerraformFile(resourceAddress string) (string, error) {
 	}
 
 	return "", fmt.Errorf("resource %s not found in any .tf file", resourceAddress)
+}
+
+// stripResourceIndex removes index notation from resource addresses
+// e.g., "aws_instance.web[0]" -> "aws_instance.web"
+// e.g., "module.vpc.aws_subnet.private[\"key\"]" -> "module.vpc.aws_subnet.private"
+func stripResourceIndex(address string) string {
+	// Find the first '[' and remove everything from there to the end
+	if idx := strings.Index(address, "["); idx != -1 {
+		return address[:idx]
+	}
+	return address
 }
 
 // findTerraformFiles returns a list of all .tf files in the repository

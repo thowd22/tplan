@@ -100,12 +100,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	// If drift mode is enabled, enhance the plan with git information
-	if *driftMode {
-		if err := enrichWithGitInfo(planResult); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Could not get git information: %v\n", err)
-			// Continue anyway - we'll show the plan without git info
-		}
+	// Always enrich with file information for grouping
+	// This populates the FilePath in DriftInfo even without full drift mode
+	if err := enrichWithFileInfo(planResult, *driftMode); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not get file information: %v\n", err)
+		// Continue anyway - we'll show the plan without file info
 	}
 
 	// If report mode is enabled, generate the report and exit
@@ -174,7 +173,7 @@ func generateReport(planResult *models.PlanResult, includeDrift bool) error {
 	return gen.WriteToFile("report.md")
 }
 
-func enrichWithGitInfo(planResult *models.PlanResult) error {
+func enrichWithFileInfo(planResult *models.PlanResult, fullDriftMode bool) error {
 	// Get current directory
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -187,22 +186,62 @@ func enrichWithGitInfo(planResult *models.PlanResult) error {
 		return fmt.Errorf("failed to initialize git repository: %w", err)
 	}
 
-	// For each resource change, try to get git information
+	// For each resource change, try to get git/file information
 	for i := range planResult.Resources {
 		resource := &planResult.Resources[i]
 
-		// Get drift info for this resource
+		// Get full drift info for this resource (includes file path and git info)
 		driftInfo, err := repo.GetDriftInfo(resource.Address)
 		if err != nil {
 			// Not a critical error - just skip this resource
 			continue
 		}
 
-		// Attach the drift info to the resource
+		// Always attach the full drift info
+		// This provides file grouping and git information
 		resource.DriftInfo = driftInfo
 	}
 
+	// Second pass: for deleted resources without file info, try to find their replacement
+	for i := range planResult.Resources {
+		resource := &planResult.Resources[i]
+
+		// Only process deleted resources without drift info
+		if resource.Action != models.ActionDelete || resource.DriftInfo != nil {
+			continue
+		}
+
+		// Look for a create operation with the same type and index
+		for j := range planResult.Resources {
+			other := &planResult.Resources[j]
+
+			// Check if this is a potential replacement (same type, same index, create action)
+			if other.Action == models.ActionCreate &&
+				other.Type == resource.Type &&
+				indexMatches(other.Index, resource.Index) &&
+				other.DriftInfo != nil {
+				// Copy the drift info from the replacement
+				resource.DriftInfo = other.DriftInfo
+				break
+			}
+		}
+	}
+
 	return nil
+}
+
+// indexMatches checks if two resource indices match
+func indexMatches(idx1, idx2 interface{}) bool {
+	// Handle nil cases
+	if idx1 == nil && idx2 == nil {
+		return true
+	}
+	if idx1 == nil || idx2 == nil {
+		return false
+	}
+
+	// Compare as strings to handle both int and string indices
+	return fmt.Sprintf("%v", idx1) == fmt.Sprintf("%v", idx2)
 }
 
 func printHelp() {
