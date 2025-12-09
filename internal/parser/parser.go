@@ -143,6 +143,7 @@ func (p *Parser) convertResourceChange(rc *tfjson.ResourceChange) models.Resourc
 		ProviderName: rc.ProviderName,
 		Index:        rc.Index,
 		Deposed:      rc.DeposedKey,
+		Dependencies: make([]string, 0),
 	}
 
 	if rc.Change != nil {
@@ -162,12 +163,76 @@ func (p *Parser) convertResourceChange(rc *tfjson.ResourceChange) models.Resourc
 		if change.Action == models.ActionReplace {
 			change.ActionReason = "forces replacement"
 		}
+
+		// Extract dependencies from After values
+		change.Dependencies = extractDependencies(rc.Change.After)
 	}
 
 	return change
 }
 
 // Helper functions
+
+// extractDependencies recursively searches for resource references in the After state
+func extractDependencies(v interface{}) []string {
+	deps := make([]string, 0)
+	seen := make(map[string]bool)
+
+	extractDepsRecursive(v, &deps, seen)
+	return deps
+}
+
+// extractDepsRecursive recursively extracts resource addresses from nested structures
+func extractDepsRecursive(v interface{}, deps *[]string, seen map[string]bool) {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		for _, v := range val {
+			extractDepsRecursive(v, deps, seen)
+		}
+	case []interface{}:
+		for _, item := range val {
+			extractDepsRecursive(item, deps, seen)
+		}
+	case string:
+		// Look for resource references - they typically contain resource type patterns
+		// Examples: "aws_s3_bucket.example", "${aws_iam_role.example.arn}"
+		if isResourceReference(val) {
+			addr := extractResourceAddress(val)
+			if addr != "" && !seen[addr] {
+				seen[addr] = true
+				*deps = append(*deps, addr)
+			}
+		}
+	}
+}
+
+// isResourceReference checks if a string looks like a resource reference
+func isResourceReference(s string) bool {
+	// Check if string contains a resource type pattern (provider_service_resource.name)
+	// Common patterns: aws_, google_, azurerm_, etc.
+	return strings.Contains(s, "_") && strings.Contains(s, ".")
+}
+
+// extractResourceAddress extracts the resource address from various reference formats
+func extractResourceAddress(s string) string {
+	// Remove common wrapper patterns like ${...} or data.
+	s = strings.TrimPrefix(s, "${")
+	s = strings.TrimSuffix(s, "}")
+
+	// Remove "data." prefix for data sources
+	s = strings.TrimPrefix(s, "data.")
+
+	// Split by "." and take the first two parts (type.name)
+	parts := strings.Split(s, ".")
+	if len(parts) >= 2 {
+		// Check if the first part looks like a resource type
+		if strings.Contains(parts[0], "_") {
+			return parts[0] + "." + parts[1]
+		}
+	}
+
+	return ""
+}
 
 // convertActions converts tfjson.Actions to string slice
 func convertActions(actions tfjson.Actions) []string {

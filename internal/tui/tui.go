@@ -75,9 +75,12 @@ func NewModel(plan *models.PlanResult) Model {
 	}
 }
 
-// buildTreeNodes converts resources into a hierarchical tree structure
+// buildTreeNodes converts resources into a hierarchical tree structure with grouping
 func buildTreeNodes(resources []models.ResourceChange) []*TreeNode {
-	nodes := make([]*TreeNode, 0, len(resources))
+	// Create a map of all resources by their address for quick lookup
+	resourceMap := make(map[string]*TreeNode)
+
+	// First pass: create all nodes
 	for _, res := range resources {
 		node := &TreeNode{
 			Resource: res,
@@ -85,8 +88,42 @@ func buildTreeNodes(resources []models.ResourceChange) []*TreeNode {
 			Children: []*TreeNode{},
 			Level:    0,
 		}
-		nodes = append(nodes, node)
+		resourceMap[res.Address] = node
 	}
+
+	// Second pass: build dependency hierarchy
+	// For each resource, check its dependencies and group under the first found parent
+	nodes := make([]*TreeNode, 0)
+	childrenMap := make(map[string]bool) // Track which resources are children
+
+	for _, res := range resources {
+		node := resourceMap[res.Address]
+
+		// Check if this resource depends on any other resource in the plan
+		var parentNode *TreeNode
+		for _, depAddr := range res.Dependencies {
+			if parent, exists := resourceMap[depAddr]; exists {
+				// Found a parent - this resource should be grouped under it
+				parentNode = parent
+				break
+			}
+		}
+
+		if parentNode != nil {
+			// Add as child to the parent
+			node.Level = 1
+			parentNode.Children = append(parentNode.Children, node)
+			childrenMap[res.Address] = true
+		}
+	}
+
+	// Third pass: collect only top-level nodes (those not marked as children)
+	for _, res := range resources {
+		if !childrenMap[res.Address] {
+			nodes = append(nodes, resourceMap[res.Address])
+		}
+	}
+
 	return nodes
 }
 
@@ -258,8 +295,15 @@ func (m Model) renderChangesView() string {
 		return helpStyle.Render("No changes to display")
 	}
 
-	// Render all nodes (let terminal handle scrolling)
-	for i := 0; i < len(visibleNodes); i++ {
+	// Calculate viewport bounds
+	start := m.viewportTop
+	end := m.viewportTop + m.viewportSize
+	if end > len(visibleNodes) {
+		end = len(visibleNodes)
+	}
+
+	// Render nodes within viewport
+	for i := start; i < end; i++ {
 		node := visibleNodes[i]
 		// Check if this node is the currently selected one
 		isSelected := (i == m.cursor)
@@ -268,10 +312,23 @@ func (m Model) renderChangesView() string {
 		b.WriteString("\n")
 
 		// Render expanded details immediately after the node line
-		if node.Expanded {
+		// But only if we're showing the node's own details (Level 0 nodes)
+		// Children (Level 1) shouldn't show full details, just the resource line
+		if node.Expanded && node.Level == 0 {
 			details := m.renderResourceDetails(node)
 			b.WriteString(details)
 		}
+	}
+
+	// Scroll indicator
+	if len(visibleNodes) > m.viewportSize {
+		scrollInfo := fmt.Sprintf("\n%s [%d-%d of %d]",
+			helpStyle.Render("Scroll:"),
+			start+1,
+			end,
+			len(visibleNodes),
+		)
+		b.WriteString(scrollInfo)
 	}
 
 	return b.String()
@@ -293,19 +350,26 @@ func (m Model) renderTreeNode(node *TreeNode, selected bool) string {
 	// Build the line with selection indicator
 	address := node.Resource.Address
 
+	// Add child count for parent nodes
+	childInfo := ""
+	if node.Level == 0 && len(node.Children) > 0 {
+		childInfo = fmt.Sprintf(" (%d related)", len(node.Children))
+	}
+
 	if selected {
 		// Build full text line first, then apply selection style
-		fullLine := fmt.Sprintf("❯ %s%s %s %s", prefix, expandIcon, actionIcon, address)
+		fullLine := fmt.Sprintf("❯ %s%s %s %s%s", prefix, expandIcon, actionIcon, address, childInfo)
 		// Apply selection background without width constraint
 		return selectedStyle.Render(fullLine)
 	} else {
-		// Normal rendering - color only the icon and resource name, not the entire line
+		// Normal rendering with colored resource text
 		selector := treeLineStyle.Render("  ")
 		prefixText := treeLineStyle.Render(prefix)
 		expandText := treeLineStyle.Render(expandIcon + " ")
 		iconAndName := actionStyle.Render(actionIcon + " " + address)
+		childInfoStyled := treeLineStyle.Render(childInfo)
 
-		return selector + prefixText + expandText + iconAndName
+		return selector + prefixText + expandText + iconAndName + childInfoStyled
 	}
 }
 
@@ -532,7 +596,15 @@ func (m Model) renderHelp() string {
 
 // getVisibleNodes returns all currently visible nodes (considering expand/collapse state)
 func (m Model) getVisibleNodes() []*TreeNode {
-	return m.nodes // For now, all nodes are visible at the top level
+	visible := make([]*TreeNode, 0)
+	for _, node := range m.nodes {
+		visible = append(visible, node)
+		// If node is expanded, add its children
+		if node.Expanded && len(node.Children) > 0 {
+			visible = append(visible, node.Children...)
+		}
+	}
+	return visible
 }
 
 // adjustViewport adjusts the viewport to keep the cursor visible

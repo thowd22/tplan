@@ -65,6 +65,9 @@ type ResourceChange struct {
 	Index   interface{} // For resources with count or for_each
 	Deposed string      // Deposed object ID if applicable
 
+	// Dependencies - addresses of resources this resource depends on
+	Dependencies []string
+
 	// Drift information (populated when -drift flag is used)
 	DriftInfo *DriftInfo
 }
