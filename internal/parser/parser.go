@@ -90,6 +90,12 @@ func (p *Parser) parseJSON(data []byte) (*models.PlanResult, error) {
 		DriftedResources: make([]models.DriftedResource, 0),
 	}
 
+	// Build a map of resource configurations for dependency extraction
+	configMap := make(map[string]*tfjson.ConfigResource)
+	if plan.Config != nil && plan.Config.RootModule != nil {
+		p.buildConfigMap(plan.Config.RootModule, "", configMap)
+	}
+
 	// Parse resource changes
 	if plan.ResourceChanges != nil {
 		for _, rc := range plan.ResourceChanges {
@@ -98,6 +104,28 @@ func (p *Parser) parseJSON(data []byte) (*models.PlanResult, error) {
 			}
 
 			resourceChange := p.convertResourceChange(rc)
+
+			// Extract dependencies from configuration
+			if config, exists := configMap[rc.Address]; exists {
+				resourceChange.Dependencies = p.extractDependenciesFromConfig(config, configMap)
+			}
+
+			// Also check After state for additional dependencies
+			afterDeps := extractDependencies(rc.Change.After)
+			for _, dep := range afterDeps {
+				// Add if not already in dependencies
+				found := false
+				for _, existing := range resourceChange.Dependencies {
+					if existing == dep {
+						found = true
+						break
+					}
+				}
+				if !found {
+					resourceChange.Dependencies = append(resourceChange.Dependencies, dep)
+				}
+			}
+
 			result.Resources = append(result.Resources, resourceChange)
 
 			// Check for drift
@@ -130,6 +158,83 @@ func (p *Parser) parseJSON(data []byte) (*models.PlanResult, error) {
 	}
 
 	return result, nil
+}
+
+// buildConfigMap recursively builds a map of resource addresses to their configurations
+func (p *Parser) buildConfigMap(module *tfjson.ConfigModule, modulePrefix string, configMap map[string]*tfjson.ConfigResource) {
+	if module == nil {
+		return
+	}
+
+	// Process resources in this module
+	for _, res := range module.Resources {
+		addr := res.Address
+		if modulePrefix != "" {
+			addr = modulePrefix + "." + addr
+		}
+		configMap[addr] = res
+	}
+
+	// Recursively process child modules
+	for name, call := range module.ModuleCalls {
+		childPrefix := name
+		if modulePrefix != "" {
+			childPrefix = modulePrefix + ".module." + name
+		} else {
+			childPrefix = "module." + name
+		}
+		if call.Module != nil {
+			p.buildConfigMap(call.Module, childPrefix, configMap)
+		}
+	}
+}
+
+// extractDependenciesFromConfig extracts dependencies from a resource's configuration
+func (p *Parser) extractDependenciesFromConfig(config *tfjson.ConfigResource, configMap map[string]*tfjson.ConfigResource) []string {
+	deps := make([]string, 0)
+	seen := make(map[string]bool)
+
+	// First, add explicit depends_on
+	for _, dep := range config.DependsOn {
+		if !seen[dep] {
+			seen[dep] = true
+			deps = append(deps, dep)
+		}
+	}
+
+	// Then extract references from expressions
+	if config.Expressions != nil {
+		for _, expr := range config.Expressions {
+			p.extractDepsFromExpression(expr, &deps, seen, configMap)
+		}
+	}
+
+	return deps
+}
+
+// extractDepsFromExpression recursively extracts resource references from expressions
+func (p *Parser) extractDepsFromExpression(expr *tfjson.Expression, deps *[]string, seen map[string]bool, configMap map[string]*tfjson.ConfigResource) {
+	if expr == nil {
+		return
+	}
+
+	// Check for direct references
+	if expr.References != nil {
+		for _, ref := range expr.References {
+			addr := extractResourceAddress(ref)
+			if addr != "" && !seen[addr] {
+				// Verify this resource exists in the plan
+				if _, exists := configMap[addr]; exists {
+					seen[addr] = true
+					*deps = append(*deps, addr)
+				}
+			}
+		}
+	}
+
+	// Recursively process nested expressions if any
+	// Note: The Expression type may contain nested values, but the tfjson library
+	// primarily exposes References which is what we need
 }
 
 // convertResourceChange converts tfjson.ResourceChange to our internal model

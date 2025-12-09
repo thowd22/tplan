@@ -148,14 +148,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
-				m.adjustViewport()
+				m = m.adjustViewport()
 			}
 
 		case "down", "j":
 			visibleNodes := m.getVisibleNodes()
 			if m.cursor < len(visibleNodes)-1 {
 				m.cursor++
-				m.adjustViewport()
+				m = m.adjustViewport()
 			}
 
 		case "enter", " ":
@@ -187,7 +187,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Go to bottom
 			visibleNodes := m.getVisibleNodes()
 			m.cursor = len(visibleNodes) - 1
-			m.adjustViewport()
+			m = m.adjustViewport()
 
 		case "e":
 			// Expand all
@@ -608,12 +608,36 @@ func (m Model) getVisibleNodes() []*TreeNode {
 }
 
 // adjustViewport adjusts the viewport to keep the cursor visible
-func (m Model) adjustViewport() {
+func (m Model) adjustViewport() Model {
+	visibleNodes := m.getVisibleNodes()
+	if len(visibleNodes) == 0 {
+		m.viewportTop = 0
+		return m
+	}
+
+	// Ensure cursor is within bounds
+	if m.cursor >= len(visibleNodes) {
+		m.cursor = len(visibleNodes) - 1
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+
+	// Adjust viewport to keep cursor visible
 	if m.cursor < m.viewportTop {
+		// Cursor moved above viewport, scroll up
 		m.viewportTop = m.cursor
 	} else if m.cursor >= m.viewportTop+m.viewportSize {
+		// Cursor moved below viewport, scroll down
 		m.viewportTop = m.cursor - m.viewportSize + 1
 	}
+
+	// Ensure viewport doesn't go negative
+	if m.viewportTop < 0 {
+		m.viewportTop = 0
+	}
+
+	return m
 }
 
 // countActions counts different action types in the plan
