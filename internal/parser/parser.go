@@ -3,7 +3,6 @@ package parser
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -19,14 +18,8 @@ func NewParser() *Parser {
 	return &Parser{}
 }
 
-// Parse reads and parses Terraform plan from io.Reader
-func (p *Parser) Parse(r io.Reader) (*models.PlanResult, error) {
-	// Read all input
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read input: %w", err)
-	}
-
+// ParseBytes parses Terraform plan from byte slice
+func (p *Parser) ParseBytes(data []byte) (*models.PlanResult, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("no input provided")
 	}
@@ -38,12 +31,9 @@ func (p *Parser) Parse(r io.Reader) (*models.PlanResult, error) {
 tplan only supports Terraform JSON plan format.
 
 Usage:
-  terraform plan -out=tfplan
-  terraform show -json tfplan | tplan
+  tplan
 
-Or:
-  terraform show -json tfplan | tplan -drift
-  terraform show -json tfplan | tplan -report`)
+The tool will automatically run terraform/tofu plan and show results.`)
 	}
 
 	result, err := p.parseJSON(data)

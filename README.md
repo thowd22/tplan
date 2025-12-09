@@ -1,22 +1,23 @@
 # tplan
 
-A Terminal User Interface (TUI) for viewing and analyzing Terraform plans with git integration and drift detection.
+A Terminal User Interface (TUI) wrapper for Terraform/OpenTofu that makes reviewing plans interactive and easy.
 
 ## Overview
 
-`tplan` is a command-line tool that provides an interactive interface for reviewing Terraform plans. It parses Terraform JSON plan output from stdin and presents it in an easy-to-navigate hierarchical TUI, similar to git log. With built-in drift detection and git integration, you can see exactly which commits and authors modified the resources.
+`tplan` is a drop-in replacement for `terraform plan` that automatically runs the plan, captures the output, and displays it in an interactive terminal UI. Simply use `tplan` instead of `terraform plan` and enjoy a better planning experience with git integration and drift detection.
 
 ## Features
 
-- **JSON Plan Format**: Works with Terraform's complete JSON plan format for accurate, detailed information
-- **Interactive Hierarchical TUI**: Navigate through Terraform plan changes in a git log-style tree view
+- **Drop-in Replacement**: Just use `tplan` instead of `terraform plan`
+- **Auto-detection**: Automatically detects and uses Terraform or OpenTofu
+- **Interactive TUI**: Navigate through plan changes in a git log-style tree view
 - **Expand/Collapse**: Toggle resource details with keyboard controls
 - **Complete Attribute Display**: View all resource attributes, including nested structures
 - **Git Integration**: Drift detection showing commit ID, branch, author, and file information
 - **Error & Warning Display**: Dedicated tabs for errors and warnings
 - **Color-Coded Actions**: Visual distinction between creates (green), updates (yellow), deletes (red), and replaces (blue)
-- **Resource Details**: View before/after states and attribute changes
 - **Report Generation**: Export plan analysis to Markdown format
+- **Pass-through Arguments**: All terraform/tofu arguments work seamlessly
 
 ## Installation
 
@@ -27,36 +28,52 @@ cd tplan
 go build -o tplan ./cmd/tplan
 ```
 
-Or install directly:
+Install to your PATH:
 
 ```bash
 go install ./cmd/tplan
+# Or copy the binary
+sudo cp tplan /usr/local/bin/
 ```
+
+## Requirements
+
+Either **Terraform** or **OpenTofu** must be installed and available in your PATH.
+
+- Install Terraform: https://developer.hashicorp.com/terraform/install
+- Install OpenTofu: https://opentofu.org/docs/intro/install/
+
+tplan will automatically detect which one is available (preferring Terraform if both are present).
 
 ## Usage
 
 ### Basic Usage
 
-tplan requires Terraform's JSON plan format for complete and accurate information:
+Simply replace `terraform plan` with `tplan`:
 
 ```bash
-# Create a plan file
-terraform plan -out=tfplan
+# Instead of this:
+terraform plan
 
-# View it with tplan
-terraform show -json tfplan | tplan
+# Use this:
+tplan
 ```
+
+tplan will:
+1. Run `terraform plan -out=.tplan-temp.tfplan`
+2. Convert it to JSON with `terraform show -json`
+3. Display the results in an interactive TUI
+4. Clean up the temporary plan file when you exit
 
 ### Drift Detection
 
-Enable drift detection and git integration with the `-drift` flag:
+Enable drift detection and git integration:
 
 ```bash
-terraform plan -out=tfplan
-terraform show -json tfplan | tplan -drift
+tplan -drift
 ```
 
-When drift is detected, tplan will show:
+When you expand a resource, you'll see git information:
 - The Terraform file containing the resource
 - Git commit ID (last commit that modified the file)
 - Git branch name
@@ -66,24 +83,34 @@ When drift is detected, tplan will show:
 
 ### Report Generation
 
-Generate a Markdown report of the plan:
+Generate a Markdown report instead of the TUI:
 
 ```bash
-terraform plan -out=tfplan
-terraform show -json tfplan | tplan -report
+tplan -report
 ```
 
 Combine with drift detection:
 
 ```bash
-terraform plan -out=tfplan
-terraform show -json tfplan | tplan -report -drift
+tplan -report -drift
 ```
 
-### Help
+### Passing Terraform Arguments
+
+All additional arguments are passed directly to terraform/tofu:
 
 ```bash
-tplan -help
+# Target specific resource
+tplan -target=aws_instance.web
+
+# Use variable file
+tplan -var-file=production.tfvars
+
+# Plan destroy
+tplan -destroy
+
+# Combine multiple arguments
+tplan -var-file=prod.tfvars -target=module.vpc
 ```
 
 ### Keyboard Shortcuts
@@ -99,22 +126,20 @@ tplan -help
 
 ## Examples
 
-### Example 1: Basic Plan Review
+### Example 1: Quick Plan Review
 
 ```bash
 cd your-terraform-project
-terraform plan -out=tfplan
-terraform show -json tfplan | tplan
+tplan
 ```
 
-Navigate through the changes, expand resources to see all attributes and details, and review errors/warnings in separate tabs.
+Navigate through the changes, expand resources to see all attributes, and review errors/warnings in separate tabs.
 
 ### Example 2: Drift Detection
 
 ```bash
 cd your-terraform-project
-terraform plan -out=tfplan
-terraform show -json tfplan | tplan -drift
+tplan -drift
 ```
 
 When you expand a resource, you'll see git information like:
@@ -131,42 +156,60 @@ When you expand a resource, you'll see git information like:
 ### Example 3: Generate Report
 
 ```bash
-terraform plan -out=tfplan
-terraform show -json tfplan | tplan -report -drift
+tplan -report -drift
 ```
 
 Creates a `report.md` file with complete plan analysis including git information.
 
-## Why JSON Format Only?
+### Example 4: Target Specific Resources
 
-tplan requires the full JSON plan format because:
+```bash
+# Plan changes for specific resource
+tplan -target=aws_instance.web
 
-- **Complete Data**: JSON format includes all resource attributes and nested structures
-- **Accurate Parsing**: Structured data ensures reliable parsing
-- **No Ambiguity**: Unlike text format, JSON is designed for programmatic consumption
-- **Better Experience**: You get to see all the details, not just a subset
+# Plan changes for module
+tplan -target=module.database
+```
 
-The text format from `terraform plan` is designed for human reading and doesn't include complete structured data. The streaming JSON format from `terraform plan -json` doesn't include detailed before/after attribute values.
+### Example 5: Using Variable Files
+
+```bash
+# Use production variables
+tplan -var-file=environments/production.tfvars
+
+# Multiple variable files
+tplan -var-file=common.tfvars -var-file=prod.tfvars
+```
+
+## How It Works
+
+1. **Detection**: tplan checks if terraform or tofu is available
+2. **Planning**: Runs `terraform/tofu plan -out=.tplan-temp.tfplan [args]`
+3. **Conversion**: Converts plan to JSON with `terraform/tofu show -json`
+4. **Parsing**: Parses the JSON using the terraform-json library
+5. **Git Integration**: If `-drift` is enabled, queries git for resource file history
+6. **Display**: Shows results in interactive TUI or generates report
+7. **Cleanup**: Removes temporary `.tplan-temp.tfplan` file on exit
 
 ## Project Structure
 
 ```
 tplan/
-├── cmd/tplan/              # Main application entry point
-│   └── main.go            # CLI with stdin pipe and flags
+├── cmd/tplan/              # Main application
+│   └── main.go            # CLI wrapper that executes terraform/tofu
 ├── internal/
-│   ├── parser/            # Terraform JSON plan parsing
-│   │   └── parser.go      # JSON parser using terraform-json library
-│   ├── tui/               # Terminal UI components
-│   │   └── tui.go         # Bubble Tea hierarchical tree view
-│   ├── git/               # Git integration utilities
-│   │   └── git.go         # Commit, branch, author detection
+│   ├── parser/            # JSON plan parsing
+│   │   └── parser.go      # Parser using terraform-json library
+│   ├── tui/               # Terminal UI
+│   │   └── tui.go         # Interactive tree view (Bubble Tea)
+│   ├── git/               # Git integration
+│   │   └── git.go         # Commit and file history detection
 │   ├── report/            # Report generation
 │   │   └── report.go      # Markdown report generator
-│   └── models/            # Data structures and models
+│   └── models/            # Data structures
 │       ├── plan.go        # Plan and resource models
 │       └── drift.go       # Drift information models
-├── examples/              # Example usage and demos
+├── examples/              # Example code and demos
 ├── .github/workflows/     # GitHub Actions for releases
 ├── go.mod                 # Go module definition
 └── README.md              # This file
@@ -178,22 +221,27 @@ tplan/
 - [Lip Gloss](https://github.com/charmbracelet/lipgloss) v0.9.1 - Terminal styling
 - [terraform-json](https://github.com/hashicorp/terraform-json) v0.18.0 - Terraform JSON parsing
 
-## How It Works
+## Comparison with terraform plan
 
-1. **Input**: tplan reads Terraform JSON plan from stdin
-2. **Validation**: Ensures input is valid JSON plan format with format_version
-3. **Parsing**: Uses terraform-json library for reliable parsing
-4. **Drift Detection**: If `-drift` flag is used, searches for corresponding .tf files and queries git
-5. **Display**: Renders an interactive TUI with hierarchical tree view showing all resource details
-6. **Navigation**: Use keyboard to explore changes, errors, and warnings
+| Feature | `terraform plan` | `tplan` |
+|---------|-----------------|---------|
+| View plan output | ✓ | ✓ |
+| Navigate resources | ✗ | ✓ |
+| Expand/collapse details | ✗ | ✓ |
+| See all attributes | ✗ | ✓ |
+| Git integration | ✗ | ✓ |
+| Color-coded actions | ✗ | ✓ |
+| Error/warning tabs | ✗ | ✓ |
+| Generate reports | ✗ | ✓ |
+| Pass-through args | ✓ | ✓ |
 
 ## Development
 
 ### Prerequisites
 
 - Go 1.21 or later
-- Git (for drift detection features)
-- Terraform (for generating test plans)
+- Terraform or OpenTofu
+- Git (for drift detection)
 
 ### Building
 
@@ -204,11 +252,12 @@ go build -o tplan ./cmd/tplan
 ### Testing
 
 ```bash
-# Create a test plan
+# Initialize a test Terraform project
 cd examples
 terraform init
-terraform plan -out=tfplan
-terraform show -json tfplan | ../tplan
+
+# Run tplan
+../tplan
 ```
 
 ## Versioning
@@ -220,7 +269,36 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-The GitHub Actions workflow will build binaries for multiple platforms with the version embedded.
+The workflow builds binaries for multiple platforms with the version embedded.
+
+## Troubleshooting
+
+### "Neither Terraform nor OpenTofu is installed"
+
+Install either Terraform or OpenTofu and ensure it's in your PATH:
+
+```bash
+# Check if terraform is available
+which terraform
+
+# Check if tofu is available
+which tofu
+```
+
+### Temporary plan file not cleaned up
+
+If tplan crashes or is force-killed, the `.tplan-temp.tfplan` file might remain. You can safely delete it:
+
+```bash
+rm .tplan-temp.tfplan
+```
+
+### Git information not showing
+
+Make sure:
+1. You're running tplan from within a git repository
+2. The Terraform files are tracked by git
+3. You're using the `-drift` flag
 
 ## License
 
