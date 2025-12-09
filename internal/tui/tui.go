@@ -39,6 +39,9 @@ type Model struct {
 	viewportSize int
 	width        int
 	height       int
+	tfCmd        string // terraform or tofu command
+	planFile     string // path to the plan file
+	shouldApply  bool   // whether user pressed 'a' to apply
 }
 
 // Styles for the TUI
@@ -63,7 +66,7 @@ var (
 )
 
 // NewModel creates a new TUI model
-func NewModel(plan *models.PlanResult) Model {
+func NewModel(plan *models.PlanResult, tfCmd, planFile string) Model {
 	nodes := buildTreeNodes(plan.Resources)
 	return Model{
 		plan:         plan,
@@ -74,6 +77,8 @@ func NewModel(plan *models.PlanResult) Model {
 		viewportSize: 20, // Will be updated on window size
 		width:        80,
 		height:       24,
+		tfCmd:        tfCmd,
+		planFile:     planFile,
 	}
 }
 
@@ -389,6 +394,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for _, node := range m.nodes {
 				node.Expanded = false
 			}
+
+		case "a":
+			// Apply the plan
+			m.shouldApply = true
+			return m, tea.Quit
 		}
 	}
 
@@ -668,45 +678,44 @@ func (m Model) renderResourceDetails(node *TreeNode) string {
 	action := string(res.Action)
 	_, actionStyle := getActionIconAndStyle(action)
 
-	// Resource metadata - use action color with aligned labels
-	b.WriteString(fmt.Sprintf("%s", indent))
-	b.WriteString(actionStyle.Render(fmt.Sprintf("%-5s %s\n", "Type:", res.Type)))
-	b.WriteString(fmt.Sprintf("%s", indent))
-	b.WriteString(actionStyle.Render(fmt.Sprintf("%-5s %s\n", "Provider:", res.ProviderName)))
-	b.WriteString(fmt.Sprintf("%s", indent))
-	b.WriteString(actionStyle.Render(fmt.Sprintf("%-5s %s\n", "Mode:", res.Mode)))
+	// White style for resource metadata
+	whiteStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("15")) // White
+
+	// Resource metadata - use white color
+	b.WriteString(fmt.Sprintf("%sType: %s\n", indent, whiteStyle.Render(res.Type)))
+	b.WriteString(fmt.Sprintf("%s  Provider: %s\n", indent, whiteStyle.Render(res.ProviderName)))
+	b.WriteString(fmt.Sprintf("%s  Mode: %s\n", indent, whiteStyle.Render(res.Mode)))
 
 	// Show file and git information if available
 	if res.DriftInfo != nil && res.DriftInfo.FilePath != "" {
 		b.WriteString("\n")
 
-		// Always show file path - use action color for header
-		b.WriteString(fmt.Sprintf("%s", indent))
-		b.WriteString(actionStyle.Render("File Information:\n"))
+		// Always show file path - use white for header
+		b.WriteString(fmt.Sprintf("%s%s\n", indent, whiteStyle.Render("File Information:")))
 
 		// Show git info if available (IsValid checks for full git info)
 		if res.DriftInfo.IsValid() {
-			// File and Commit on the same line
-			b.WriteString(fmt.Sprintf("%s  ", indent))
-			b.WriteString(actionStyle.Render(fmt.Sprintf("%-5s %-80s %-7s %s\n",
-				"File:", res.DriftInfo.FilePath,
-				"Commit:", res.DriftInfo.ShortCommitID())))
-			b.WriteString(fmt.Sprintf("%s  ", indent))
-			b.WriteString(actionStyle.Render(fmt.Sprintf("%-5s %s\n", "Branch:", res.DriftInfo.BranchName)))
-			b.WriteString(fmt.Sprintf("%s  ", indent))
-			b.WriteString(actionStyle.Render(fmt.Sprintf("%-5s %s <%s>\n", "Author:", res.DriftInfo.AuthorName, res.DriftInfo.AuthorEmail)))
-			b.WriteString(fmt.Sprintf("%s  ", indent))
-			b.WriteString(actionStyle.Render(fmt.Sprintf("%-5s %s\n", "Date:", res.DriftInfo.CommitDate.Format("2006-01-02 15:04:05"))))
+			// Author and Date on the same line
+			authorDateLine := fmt.Sprintf("Author: %s <%s> Date: %s",
+				res.DriftInfo.AuthorName,
+				res.DriftInfo.AuthorEmail,
+				res.DriftInfo.CommitDate.Format("2006-01-02 15:04:05"))
+			b.WriteString(fmt.Sprintf("%s  %s\n", indent, whiteStyle.Render(authorDateLine)))
+
+			// File, Branch, and Commit all on the same line
+			fileInfoLine := fmt.Sprintf("File: %s  Branch: %s  Commit: %s",
+				res.DriftInfo.FilePath,
+				res.DriftInfo.BranchName,
+				res.DriftInfo.ShortCommitID())
+			b.WriteString(fmt.Sprintf("%s  %s\n", indent, whiteStyle.Render(fileInfoLine)))
 		} else {
 			// If no git info, just show the file path
-			b.WriteString(fmt.Sprintf("%s  ", indent))
-			b.WriteString(actionStyle.Render(fmt.Sprintf("%-5s %s\n", "File:", res.DriftInfo.FilePath)))
+			b.WriteString(fmt.Sprintf("%s  %s\n", indent, whiteStyle.Render(fmt.Sprintf("File: %s", res.DriftInfo.FilePath))))
 		}
 
 		if res.DriftInfo.HasUncommittedChanges {
 			warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // Yellow
-			b.WriteString(fmt.Sprintf("%s  ", indent))
-			b.WriteString(warnStyle.Render(fmt.Sprintf("%-5s Has uncommitted changes\n", "Status:")))
+			b.WriteString(fmt.Sprintf("%s  %s\n", indent, warnStyle.Render("Status: Has uncommitted changes")))
 		}
 		b.WriteString("\n")
 	}
@@ -1099,7 +1108,7 @@ func (m Model) renderWarningsView() string {
 
 // renderHelp renders the help text
 func (m Model) renderHelp() string {
-	help := "↑/↓: Navigate  Enter/Space: Expand/Collapse  Tab: Switch View  e: Expand All  c: Collapse All  g/G: Top/Bottom  q: Quit"
+	help := "↑/↓: Navigate  Enter/Space: Expand/Collapse  Tab: Switch View  e: Expand All  c: Collapse All  g/G: Top/Bottom  a: Apply  q: Quit"
 	return helpStyle.Render(help)
 }
 
@@ -1308,9 +1317,18 @@ func (m Model) wrapStringSimple(s string, maxLen int) string {
 	return result.String()
 }
 
-// Run starts the TUI application
-func Run(plan *models.PlanResult) error {
-	p := tea.NewProgram(NewModel(plan), tea.WithAltScreen())
-	_, err := p.Run()
-	return err
+// Run starts the TUI application and returns whether to apply
+func Run(plan *models.PlanResult, tfCmd, planFile string) (bool, error) {
+	p := tea.NewProgram(NewModel(plan, tfCmd, planFile), tea.WithAltScreen())
+	finalModel, err := p.Run()
+	if err != nil {
+		return false, err
+	}
+
+	// Check if user pressed 'a' to apply
+	if m, ok := finalModel.(Model); ok {
+		return m.shouldApply, nil
+	}
+
+	return false, nil
 }

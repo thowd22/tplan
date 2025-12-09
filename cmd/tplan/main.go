@@ -62,13 +62,6 @@ func main() {
 	// Create temporary plan file
 	planFile := filepath.Join(".", ".tplan-temp.tfplan")
 
-	// Ensure cleanup on exit
-	defer func() {
-		if err := os.Remove(planFile); err != nil && !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Warning: failed to clean up temp file %s: %v\n", planFile, err)
-		}
-	}()
-
 	// Get any additional arguments to pass to terraform plan
 	planArgs := flag.Args()
 
@@ -119,9 +112,41 @@ func main() {
 
 	// Run the TUI
 	fmt.Println("\nLaunching TUI...")
-	if err := tui.Run(planResult); err != nil {
+	shouldApply, err := tui.Run(planResult, tfCmd, planFile)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+		// Clean up plan file before exiting
+		os.Remove(planFile)
 		os.Exit(1)
+	}
+
+	// If user pressed 'a', run terraform apply
+	if shouldApply {
+		// Ask for confirmation
+		fmt.Print("\nAre you sure you want to apply this plan? (yes/no): ")
+		var response string
+		fmt.Scanln(&response)
+
+		if response != "yes" {
+			fmt.Println("Apply cancelled.")
+			// Clean up plan file
+			os.Remove(planFile)
+			os.Exit(0)
+		}
+
+		fmt.Println("\nApplying plan...")
+		if err := runTerraformApply(tfCmd, planFile); err != nil {
+			fmt.Fprintf(os.Stderr, "\nError running terraform apply: %v\n", err)
+			// Clean up plan file before exiting
+			os.Remove(planFile)
+			os.Exit(1)
+		}
+		fmt.Println("\n✓ Apply completed successfully")
+	}
+
+	// Clean up plan file
+	if err := os.Remove(planFile); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Warning: failed to clean up temp file %s: %v\n", planFile, err)
 	}
 }
 
@@ -166,6 +191,16 @@ func runTerraformShow(tfCmd, planFile string) ([]byte, error) {
 	}
 
 	return stdout.Bytes(), nil
+}
+
+// runTerraformApply runs terraform/tofu apply with the plan file
+func runTerraformApply(tfCmd, planFile string) error {
+	cmd := exec.Command(tfCmd, "apply", planFile)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	return cmd.Run()
 }
 
 func generateReport(planResult *models.PlanResult, includeDrift bool) error {
